@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FETCH!</title>
+<meta name="description" content="A little ASCII cartoon about a dog, a cat, and one red ball.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bungee&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+  /* Layout: one centered column. A name, the show's screen as the centerpiece, a slim row of controls. */
+  :root {
+    --bg: #12141a;          /* the dark room the screen sits in */
+    --screen: #0b0c10;      /* the screen itself, a shade darker */
+    --frame: #2a2e3a;
+    --text: #d8dbe2;
+    --muted: #8a90a0;
+    --accent: #ff5f3a;      /* the ball's red, warmed up */
+    --font-display: "Bungee", "Arial Black", system-ui, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text); }
+  body {
+    font: 15px/1.5 var(--font-mono);
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center;
+    padding-block: 28px 40px;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    gap: 18px;
+  }
+  header { text-align: center; display: grid; gap: 4px; }
+  h1 { font-family: var(--font-display); font-weight: 400; font-size: clamp(2.2rem, 7vw, 3.4rem); line-height: 1; margin: 0; letter-spacing: 0.02em; }
+  h1 span { color: var(--accent); }
+  .tagline { margin: 0; color: var(--muted); }
+
+  .screen {
+    width: min(100%, 1100px);
+    background: var(--screen);
+    border: 1px solid var(--frame);
+    border-radius: 14px;
+    padding: 14px 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.03);
+    overflow: hidden;
+    position: relative;
+  }
+  pre#show {
+    margin: 0;
+    font: 15px/1.15 var(--font-mono);
+    color: var(--text);
+    white-space: pre;
+    min-height: calc(15 * 1.15em);
+  }
+  .status {
+    position: absolute; inset: 0;
+    display: grid; place-items: center; align-content: center; gap: 14px;
+    text-align: center; padding: 16px;
+    background: var(--screen);
+  }
+  .status[hidden] { display: none; }
+  .status p { margin: 0; color: var(--muted); max-width: 46ch; }
+
+  .controls { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: center; }
+  button {
+    font: 600 15px var(--font-mono);
+    color: #fff; background: var(--accent);
+    border: 0; border-radius: 999px; padding: 10px 22px; cursor: pointer;
+  }
+  button.quiet { background: transparent; color: var(--muted); border: 1px solid var(--frame); }
+  button:hover { filter: brightness(1.1); }
+  button:disabled { opacity: 0.5; cursor: progress; }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--text); outline-offset: 3px; }
+  label { color: var(--muted); display: inline-flex; gap: 8px; align-items: center; cursor: pointer; }
+  input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+  footer { color: var(--muted); font-size: 13px; text-align: center; max-width: 60ch; display: grid; gap: 6px; }
+  footer p { margin: 0; }
+  .phone-tip { display: none; color: var(--text); }
+  @media (max-width: 640px) and (orientation: portrait) { .phone-tip { display: block; } }
+</style>
+</head>
+<body>
+  <header>
+    <h1>FETCH<span>!</span></h1>
+    <p class="tagline">a dog, a cat, and one red ball</p>
+  </header>
+
+  <div class="screen" id="screen">
+    <pre id="show" aria-label="The FETCH! cartoon, drawn in text"></pre>
+    <div class="status" id="status">
+      <button id="play-first" type="button" disabled>Loading...</button>
+      <p id="status-text">Getting the show ready. The first visit takes a few seconds while Python downloads into your browser.</p>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button id="pause" type="button" hidden>Pause</button>
+    <label for="skip-intro"><input id="skip-intro" type="checkbox"> Skip the opening titles</label>
+    <button id="start-over" class="quiet" type="button" hidden>Start the series over</button>
+  </div>
+
+  <footer>
+    <p class="phone-tip">Tip: turn your phone sideways for a bigger picture.</p>
+    <p>Your series is remembered in this browser, so next time it picks up where you left off.</p>
+  </footer>
+
+<script src="https://cdn.jsdelivr.net/pyodide/v0.26.4/full/pyodide.js"></script>
+<script>
+(() => {
+  const FRAME_MS = 120;          // same speed as the terminal version
+  const MIN_COLUMNS = 80, MAX_COLUMNS = 120, BASE_FONT = 15;
+  const SAVE_KEY = "fetch-save";
+
+  const show = document.getElementById("show");
+  const screen = document.getElementById("screen");
+  const status = document.getElementById("status");
+  const statusText = document.getElementById("status-text");
+  const playFirst = document.getElementById("play-first");
+  const pauseButton = document.getElementById("pause");
+  const startOver = document.getElementById("start-over");
+  const skipIntro = document.getElementById("skip-intro");
+
+  // --- Saving each viewer's series in their own browser -----------------------------
+  const storage = {
+    get(key) { try { return localStorage.getItem(key); } catch { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); } catch { /* private mode: no memory */ } },
+    remove(key) { try { localStorage.removeItem(key); } catch {} },
+  };
+  window.saveShow = text => storage.set(SAVE_KEY, text);
+  skipIntro.checked = storage.get("fetch-skip-intro") === "yes";
+  skipIntro.addEventListener("change", () => storage.set("fetch-skip-intro", skipIntro.checked ? "yes" : "no"));
+
+  // --- Terminal colors (the 256-color palette) to web colors -------------------------
+  const BASIC = ["#000000", "#800000", "#008000", "#808000", "#000080", "#800080", "#008080", "#c0c0c0",
+                 "#808080", "#ff0000", "#00ff00", "#ffff00", "#0000ff", "#ff00ff", "#00ffff", "#ffffff"];
+  function paletteColor(n) {
+    if (n < 16) return BASIC[n];
+    if (n < 232) {
+      const i = n - 16, level = v => (v ? 55 + v * 40 : 0);
+      return `rgb(${level(Math.floor(i / 36))},${level(Math.floor(i / 6) % 6)},${level(i % 6)})`;
+    }
+    const grey = 8 + (n - 232) * 10;
+    return `rgb(${grey},${grey},${grey})`;
+  }
+  const escapeHtml = text => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  function toHtml(text) {
+    let html = "", open = false;
+    for (const part of text.split(/(\x1b\[[0-9;]*m)/)) {
+      const color = /^\x1b\[38;5;(\d+)m$/.exec(part);
+      if (color) {
+        if (open) html += "</span>";
+        html += `<span style="color:${paletteColor(+color[1])}">`;
+        open = true;
+      } else if (part.startsWith("\x1b[")) {
+        if (open) { html += "</span>"; open = false; }
+      } else {
+        html += escapeHtml(part);
+      }
+    }
+    return open ? html + "</span>" : html;
+  }
+
+  // --- Fitting the show to the screen -------------------------------------------------
+  function measureCharWidth(fontSize) {
+    const probe = document.createElement("span");
+    probe.style.cssText = `font:${fontSize}px/1 ${getComputedStyle(show).fontFamily};visibility:hidden;position:absolute;white-space:pre`;
+    probe.textContent = "M".repeat(100);
+    document.body.appendChild(probe);
+    const width = probe.getBoundingClientRect().width / 100;
+    probe.remove();
+    return width;
+  }
+  function fit() {
+    const room = screen.clientWidth - 24;
+    let fontSize = BASE_FONT;
+    let columns = Math.floor(room / measureCharWidth(fontSize));
+    if (columns < MIN_COLUMNS) {  // narrow screens: shrink the text so 80 columns still fit
+      fontSize = Math.max(6, BASE_FONT * columns / MIN_COLUMNS);
+      columns = MIN_COLUMNS;
+    }
+    show.style.fontSize = fontSize + "px";
+    return Math.min(columns, MAX_COLUMNS);
+  }
+
+  // --- Running the Python show --------------------------------------------------------
+  let python = null, timer = null, playing = false;
+
+  async function load() {
+    try {
+      await document.fonts.ready;
+      python = await loadPyodide();
+      const manifest = await (await fetch("files.json", { cache: "no-store" })).json();
+      python.FS.mkdirTree("/home/pyodide/fetch");
+      await Promise.all(manifest.files.map(async name => {
+        const source = await (await fetch(`fetch/${name}?v=${manifest.version}`)).text();
+        python.FS.writeFile(`/home/pyodide/fetch/${name}`, source);
+      }));
+      python.runPython(`
+import js
+from fetch.show import broadcast
+from fetch.world import World
+
+columns = 80
+stream = None
+
+def start(saved_text, with_intro):
+    global stream
+    world = World.from_json(saved_text) if saved_text else World()
+    stream = broadcast(world, lambda: columns, with_intro=with_intro,
+                       saved=lambda w: js.saveShow(w.to_json()))
+
+def next_frame():
+    return "\\n".join(next(stream))
+`);
+      playFirst.disabled = false;
+      playFirst.textContent = "Play";
+      statusText.textContent = storage.get(SAVE_KEY)
+        ? "Welcome back! The show picks up where you left off."
+        : "Press play to start the series from episode 1.";
+      if (new URLSearchParams(location.search).has("autoplay")) begin();
+    } catch (error) {
+      playFirst.textContent = "Couldn't load";
+      statusText.textContent = "The show couldn't load. Check your internet connection and refresh the page.";
+      console.error(error);
+    }
+  }
+
+  function tick() {
+    const started = performance.now();
+    show.innerHTML = toHtml(python.globals.get("next_frame")());
+    timer = setTimeout(tick, Math.max(0, FRAME_MS - (performance.now() - started)));
+  }
+
+  function begin() {
+    python.globals.set("columns", fit());
+    python.globals.get("start")(storage.get(SAVE_KEY), !skipIntro.checked);
+    status.hidden = true;
+    pauseButton.hidden = false;
+    startOver.hidden = false;
+    resume();
+  }
+  function resume() { playing = true; pauseButton.textContent = "Pause"; tick(); }
+  function pause() { playing = false; pauseButton.textContent = "Play"; clearTimeout(timer); }
+
+  playFirst.addEventListener("click", begin);
+  pauseButton.addEventListener("click", () => (playing ? pause() : resume()));
+  startOver.addEventListener("click", () => {
+    pause();
+    storage.remove(SAVE_KEY);
+    begin();
+  });
+  window.addEventListener("resize", () => {
+    if (python) python.globals.set("columns", fit());  // takes effect from the next episode
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
